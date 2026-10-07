@@ -88,9 +88,12 @@ const app = createApp({
         if (!this.result) await this.runDay();
         this.$nextTick(() => {
           if (this.$refs.monthChart) {
+            const batPts = this.month.daily
+              .filter(d => d.cost_bat != null)
+              .map(d => [d.day, d.cost_bat]);
             Charts.lines(this.$refs.monthChart, [
               { name: "无储能", color: "#4da3ff", data: this.month.daily.map(d => [d.day, d.cost_no_bat]) },
-              { name: "含储能", color: "#35c97f", data: this.month.daily.map(d => [d.day, d.cost_bat]) },
+              ...(batPts.length ? [{ name: "含储能", color: "#35c97f", data: batPts }] : []),
             ]);
           }
         });

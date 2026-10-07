@@ -62,7 +62,12 @@
       <div class="cost-card" v-if="result.cost_bat != null"><div class="cost-v up">{{ result.cost_bat.toFixed(1) }} 元</div><div class="cost-k">含储能当日电费</div></div>
       <div class="cost-card" v-if="result.save"><div class="cost-v up">−{{ result.save.toFixed(1) }} 元</div><div class="cost-k">当日节省</div></div>
       <div class="cost-card"><div class="cost-v">{{ result.kwh_export.toFixed(1) }} kWh</div><div class="cost-k">光伏上网</div></div>
-      <div class="cost-card" v-if="month"><div class="cost-v">{{ month.save.toFixed(1) }} 元</div><div class="cost-k">月度节省</div></div>
+      <template v-if="month">
+        <div class="cost-card"><div class="cost-v">{{ month.cost_no_bat.toFixed(1) }} 元</div><div class="cost-k">无储能整月电费</div></div>
+        <div class="cost-card" v-if="month.cost_bat != null"><div class="cost-v up">{{ month.cost_bat.toFixed(1) }} 元</div><div class="cost-k">含储能整月电费</div></div>
+        <div class="cost-card" v-if="month.cost_bat != null"><div class="cost-v" :class="{ up: month.save >= 0 }">{{ month.save >= 0 ? '−' : '+' }}{{ Math.abs(month.save).toFixed(1) }} 元</div><div class="cost-k">整月节省（含阶梯）</div></div>
+        <div class="cost-card"><div class="cost-v">{{ month.tier_surcharge_no_bat.toFixed(1) }} 元</div><div class="cost-k">整月阶梯附加{{ month.cost_bat != null ? '（无/含：' + month.tier_surcharge_bat.toFixed(1) + '）' : '' }}</div></div>
+      </template>
     </div>
 
     <div class="chart-grid">
@@ -79,7 +84,7 @@
         <canvas ref="priceChart" class="chart-canvas" style="height:180px"></canvas>
       </section>
       <section class="panel chart-panel" v-if="month">
-        <h3>月度每日电费（{{ month.days }} 天）</h3>
+        <h3>月度每日能量电费 · {{ month.days }} 天（阶梯整月另计 {{ month.tier_surcharge_no_bat.toFixed(1) }} 元）</h3>
         <canvas ref="monthChart" class="chart-canvas"></canvas>
       </section>
     </div>

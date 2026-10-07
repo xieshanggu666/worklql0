@@ -156,11 +156,105 @@ t("光伏自用优先于充电", () => {
   }
 });
 
-t("月度账单天数与节省非负", () => {
+t("月度账单天数与能量节省非负", () => {
   const r = sim.monthBill({ month: 7, capacity: 5, feed: 0.4, days: 30, battery: { capKwh: 8, maxKw: 3, eff: 0.9, soc0: 0.5 } });
   assert.strictEqual(r.days, 30);
-  assert(r.cost_bat <= r.cost_no_bat + 1e-6);
   assert(r.kwh > 0);
+  // DP 逐日最小化分时能量电费，含储能能量电费不高于无储能
+  assert(r.energy_bat <= r.energy_no_bat + 1e-6);
+});
+
+t("月度账单：阶梯附加整月只计一次且分场景计算", () => {
+  const r = sim.monthBill({ month: 7, capacity: 5, feed: 0.4, days: 30, battery: { capKwh: 8, maxKw: 3, eff: 0.9, soc0: 0.5 } });
+  // 账单恒等式：总电费 = 能量电费 + 整月阶梯附加（无第二次附加）
+  assert(Math.abs(r.energy_no_bat + r.tier_surcharge_no_bat - r.cost_no_bat) <= 0.011);
+  assert(Math.abs(r.energy_bat + r.tier_surcharge_bat - r.cost_bat) <= 0.011);
+  // 阶梯附加必须等于整月购电量口径（而不是日附加之和）
+  assert.strictEqual(r.tier_surcharge_no_bat, Math.round(tariff.tierSurcharge(r.kwh_buy_no_bat) * 100) / 100);
+  assert.strictEqual(r.tier_surcharge_bat, Math.round(tariff.tierSurcharge(r.kwh_buy_bat) * 100) / 100);
+  // 日明细不含任何阶梯附加：任一日的购电量都不足以产生附加（否则会出现重复）
+  for (const d of r.daily) {
+    assert.strictEqual(tariff.tierSurcharge(d.kwh_buy_no_bat), 0);
+  }
+});
+
+t("月度账单：日明细与单日模拟完全一致", () => {
+  const opt = { month: 7, capacity: 5, feed: 0.4, battery: { capKwh: 8, maxKw: 3, eff: 0.9, soc0: 0.5 } };
+  const m = sim.monthBill({ ...opt, days: 30, seed: 11 });
+  const valley = Math.min(...tariff.hourlyPrices());
+  for (const d of m.daily) {
+    const w = sim.dayWeather(11, d.day);
+    // 用月度中该日的起始电量与残值，通过单日 API 精确复算
+    const one = sim.simulateDay({
+      ...opt, day: d.day, weather: w,
+      batterySocStartKwh: d.soc_start_kwh, endValue: valley,
+    });
+    assert.strictEqual(one.energy_no_bat, d.energy_no_bat);
+    assert.strictEqual(one.energy_bat, d.energy_bat);
+    assert.strictEqual(one.kwh_buy_no_bat, d.kwh_buy_no_bat);
+    assert.strictEqual(one.kwh_buy_bat, d.kwh_buy_bat);
+  }
+});
+
+t("月度账单：电池电量逐日结转、跨日不断档", () => {
+  const r = sim.monthBill({ month: 7, capacity: 2, feed: 0.05, days: 14, seed: 5, battery: { capKwh: 2, maxKw: 3, eff: 0.8, soc0: 2 } });
+  // 首日起点即用户给定的 soc0（kWh）
+  assert.strictEqual(r.daily[0].soc_start_kwh, 2);
+  for (let i = 1; i < r.daily.length; i++) {
+    // 当日起点必须等于前一日末态，且都在物理范围内
+    assert.strictEqual(r.daily[i].soc_start_kwh, r.daily[i - 1].soc_end_kwh);
+    assert(r.daily[i].soc_start_kwh >= -1e-9 && r.daily[i].soc_start_kwh <= 2 + 1e-9);
+  }
+  // 月末电池资产估值与首末存量一致（残值为固定谷价 0.32）
+  const expectAsset = 0.32 * (r.daily[r.daily.length - 1].soc_end_kwh - r.daily[0].soc_start_kwh);
+  assert(Math.abs(expectAsset - r.battery_asset_value) <= 0.011);
+});
+
+t("月度账单：结转初态会改变当日调度，而非每日重置", () => {
+  const opt = { month: 7, capacity: 2, feed: 0.05, battery: { capKwh: 2, maxKw: 3, eff: 0.8, soc0: 2 } };
+  const m = sim.monthBill({ ...opt, days: 5, seed: 9 });
+  const day = m.daily[1];
+  const w = sim.dayWeather(9, 2);
+  const carried = sim.simulateDay({ ...opt, day: 2, weather: w, batterySocStartKwh: day.soc_start_kwh, endValue: 0.32 });
+  const wrongCarry = sim.simulateDay({ ...opt, day: 2, weather: w, batterySocStartKwh: 0, endValue: 0.32 });
+  // 以错误的初始电量（0）复算必然得到不同购电量，证明日结果依赖结转初态
+  assert.notStrictEqual(wrongCarry.kwh_buy_bat, carried.kwh_buy_bat);
+  assert.strictEqual(carried.energy_bat, day.energy_bat);
+});
+
+t("月度账单：无电池场景字段为空且不产生含储能费用", () => {
+  const r = sim.monthBill({ month: 7, days: 20 });
+  assert.strictEqual(r.cost_bat, null);
+  assert.strictEqual(r.tier_surcharge_bat, null);
+  assert.strictEqual(r.kwh_buy_bat, null);
+  assert.strictEqual(r.save, 0);
+  for (const d of r.daily) assert.strictEqual(d.cost_bat, null);
+  assert(Math.abs(r.energy_no_bat + r.tier_surcharge_no_bat - r.cost_no_bat) <= 0.011);
+});
+
+t("月度账单：无重复计费的整月重算恒等式", () => {
+  const opt = { month: 7, capacity: 5, feed: 0.4, battery: { capKwh: 8, maxKw: 3, eff: 0.9, soc0: 0.5 } };
+  const m = sim.monthBill({ ...opt, days: 30, seed: 11 });
+  const valley = Math.min(...tariff.hourlyPrices());
+  // 用 computeDay 按相同初态与结转从头重算，逐日结果必须与账单完全一致
+  let carry = null;
+  let energyNo = 0;
+  let energyBat = 0;
+  let kwhNo = 0;
+  let kwhBat = 0;
+  for (let d = 1; d <= 30; d++) {
+    const r = sim.computeDay({ ...opt, month: 7, day: d, weather: sim.dayWeather(11, d) }, carry, valley);
+    energyNo += r.energy_no_bat;
+    energyBat += r.energy_bat;
+    kwhNo += r.kwh_buy_no_bat;
+    kwhBat += r.kwh_buy_bat;
+    carry = r.soc_end_kwh;
+  }
+  assert(Math.round(energyNo * 100) / 100 === m.energy_no_bat);
+  assert(Math.round(energyBat * 100) / 100 === m.energy_bat);
+  // 购电量逐时千分位舍入后累加，分位内一致即可
+  assert(Math.abs(kwhNo - m.kwh_buy_no_bat) < 0.01);
+  assert(Math.abs(kwhBat - m.kwh_buy_bat) < 0.01);
 });
 
 t("月度账单确定性", () => {
