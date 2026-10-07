@@ -45,10 +45,25 @@ function tierSurcharge(monthKwh, tier) {
   return total;
 }
 
+// 已累计 monthKwh 度时，下一度购电所处档位的边际加价（元/kWh）。
+// 与 tierSurcharge 的“按档累计”边界一致：累计量达到门槛（k >= limit）后，
+// 下一度即按更高一档加价（前 200 度为第一档，第 201 度起 +0.05）。
+// 月度逐日调度时传入当日优化器，使其能提前规避跨档。
+function marginalSurcharge(monthKwh, tier) {
+  const t = tier || DEFAULT_TIER;
+  const k = Math.max(0, monthKwh || 0);
+  let rate = t[0].surcharge;
+  for (let i = 0; i + 1 < t.length; i++) {
+    // 达到第 i 档门槛后，下一度进入第 i+1 档，适用其加价
+    if (k >= t[i].limit && isFinite(t[i].limit)) rate = t[i + 1].surcharge;
+  }
+  return rate;
+}
+
 function hourlyPrices(tou) {
   const out = [];
   for (let h = 0; h < 24; h++) out.push(touPrice(h, tou));
   return out;
 }
 
-module.exports = { DEFAULT_TOU, DEFAULT_TIER, touPrice, touLabel, tierSurcharge, hourlyPrices };
+module.exports = { DEFAULT_TOU, DEFAULT_TIER, touPrice, touLabel, tierSurcharge, marginalSurcharge, hourlyPrices };

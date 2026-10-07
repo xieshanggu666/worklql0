@@ -4,18 +4,24 @@ function r3(x) {
   return Math.round(x * 1000) / 1000;
 }
 
-function optimizeBattery({ load, solar, price, feed, capKwh, maxKw, eff, soc0 }) {
+function optimizeBattery({ load, solar, price, feed, capKwh, maxKw, eff, soc0, tierRate }) {
   const H = 24;
   const n = 21;
   const step = capKwh / (n - 1);
   const socOf = i => i * step;
   const INF = Infinity;
-  const init = Math.max(0, Math.min(capKwh, soc0 == null ? capKwh / 2 : soc0));
+  // soc0 统一为 0-1 的 SOC 比例（与界面一致），并吸附到最近的 SOC 网格点；
+  // 这样逐日结转时前一天的末态网格点就是次日精确的初态，不会产生跨日偏差。
+  const frac0 = Math.max(0, Math.min(1, soc0 == null ? 0.5 : soc0));
+  const i0 = Math.max(0, Math.min(n - 1, Math.round(frac0 * (n - 1))));
   const eff2 = eff || 0.9;
   const maxP = Math.max(0, maxKw || 0);
+  // 月度阶梯边际加价：购电价按当前档位抬升，使日内调度不会为谷电套利虚增购电量。
+  const tier = Math.max(0, tierRate || 0);
+  const buyPrice = h => price[h] + tier;
 
   let dp = new Array(n).fill(INF);
-  dp[Math.round(init / step)] = 0;
+  dp[i0] = 0;
   const parents = [];
 
   for (let h = 0; h < H; h++) {
@@ -34,10 +40,16 @@ function optimizeBattery({ load, solar, price, feed, capKwh, maxKw, eff, soc0 })
         if (d > 1e-12) ch = d / eff2;
         else if (d < -1e-12) dis = -d;
         if (ch > maxP + 1e-9 || dis > maxP + 1e-9) continue;
-        const netLoad = Math.max(0, load[h] - dis * eff2);
+        // 放电只供本地负荷：能由光伏直接满足的部分无需放电，
+        // 电池放电上限为扣除光伏后的剩余负荷（电池不向电网反送），
+        // 避免“谷电充电→富余时段放电上网”的虚假套利。
+        const loadGap = Math.max(0, load[h] - solar[h]);
+        const disUse = Math.min(dis, loadGap / eff2);
+        if (dis - disUse > 1e-9) continue;
+        const netLoad = Math.max(0, load[h] - disUse * eff2);
         const gridIn = Math.max(0, netLoad + ch - solar[h]);
         const exp = Math.max(0, solar[h] - netLoad - ch);
-        const v = cur + price[h] * gridIn - feed * exp;
+        const v = cur + buyPrice(h) * gridIn - feed * exp;
         if (v < ndp[j] - 1e-9) {
           ndp[j] = v;
           par[j] = i;
@@ -71,7 +83,9 @@ function optimizeBattery({ load, solar, price, feed, capKwh, maxKw, eff, soc0 })
   let kwhBuy = 0;
   let kwhExport = 0;
   for (let h = 0; h < H; h++) {
-    const netLoad = Math.max(0, load[h] - dis[h] * eff2);
+    const loadGap = Math.max(0, load[h] - solar[h]);
+    const disUse = Math.min(dis[h], loadGap / eff2);
+    const netLoad = Math.max(0, load[h] - disUse * eff2);
     const gridIn = Math.max(0, netLoad + ch[h] - solar[h]);
     const exp = Math.max(0, solar[h] - netLoad - ch[h]);
     kwhBuy += gridIn;
@@ -79,14 +93,22 @@ function optimizeBattery({ load, solar, price, feed, capKwh, maxKw, eff, soc0 })
     hours.push({
       h,
       ch: r3(ch[h]),
-      dis: r3(dis[h]),
+      dis: r3(disUse),
       soc: r3(soc[h] / capKwh),
       grid_in: r3(gridIn),
       export: r3(exp),
       net_load: r3(netLoad),
     });
   }
-  return { hours, cost: total, kwh_buy: r3(kwhBuy), kwh_export: r3(kwhExport) };
+  return {
+    hours,
+    cost: total,
+    kwh_buy: r3(kwhBuy),
+    kwh_export: r3(kwhExport),
+    soc0_frac: i0 / (n - 1),
+    soc_end_kwh: r3(soc[H]),
+    soc_end_frac: r3(soc[H] / capKwh),
+  };
 }
 
 module.exports = { optimizeBattery };

@@ -25,10 +25,11 @@ body { background: var(--bg); color: var(--txt); font-family: "PingFang SC", "Mi
 .panel input:disabled { opacity: .4; }
 .plan-note { margin-top: 10px; color: var(--dim); font-size: 12px; line-height: 1.8; }
 .plan-chip { display: inline-block; background: var(--panel2); border: 1px solid var(--line); border-radius: 20px; padding: 2px 10px; margin: 2px; }
-.cost-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; padding: 0 22px 14px; }
+.cost-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; padding: 0 22px 14px; }
 .cost-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; text-align: center; }
 .cost-v { font-size: 17px; font-weight: 700; }
 .cost-v.up { color: var(--accent); }
+.cost-v .cost-sub { color: var(--dim); font-weight: 500; font-size: 13px; }
 .cost-k { color: var(--dim); font-size: 11px; margin-top: 4px; }
 .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 0 22px 14px; }
 .chart-panel { min-width: 0; }

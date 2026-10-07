@@ -90,7 +90,9 @@ const app = createApp({
           if (this.$refs.monthChart) {
             Charts.lines(this.$refs.monthChart, [
               { name: "无储能", color: "#4da3ff", data: this.month.daily.map(d => [d.day, d.cost_no_bat]) },
-              { name: "含储能", color: "#35c97f", data: this.month.daily.map(d => [d.day, d.cost_bat]) },
+              ...(this.month.daily.some(d => d.cost_bat != null)
+                ? [{ name: "含储能", color: "#35c97f", data: this.month.daily.map(d => [d.day, d.cost_bat == null ? d.cost_no_bat : d.cost_bat]) }]
+                : []),
             ]);
           }
         });
